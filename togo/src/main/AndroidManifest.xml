@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The one permission the library asks for: uploading events. Nothing else, and
+  in particular never the advertising ID permission: a library's manifest is
+  merged into every app that adds it.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
