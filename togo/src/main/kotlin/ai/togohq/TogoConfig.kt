@@ -48,6 +48,9 @@ public class TogoConfig private constructor(builder: Builder) {
    * thread, after the call that caused it returns.
    */
   public val onError: TogoErrorListener? = builder.onError
+  /** A wrapper SDK's own name and version, set by `TogoWrapper.set()` alone. */
+  internal val wrapperName: String? = builder.wrapperName
+  internal val wrapperVersion: String? = builder.wrapperVersion
 
   /**
    * Every setter takes null, as a Java caller can pass it: a null write key is
@@ -64,6 +67,8 @@ public class TogoConfig private constructor(builder: Builder) {
     internal var appVersion: String? = null
     internal var appBuild: String? = null
     internal var onError: TogoErrorListener? = null
+    internal var wrapperName: String? = null
+    internal var wrapperVersion: String? = null
 
     public fun endpoint(endpoint: String?): Builder = apply { if (endpoint != null) this.endpoint = endpoint }
     public fun sessionTimeoutSeconds(seconds: Long): Builder = apply { sessionTimeoutSeconds = seconds }

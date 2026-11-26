@@ -19,10 +19,46 @@ package ai.togohq.core
 internal const val SDK_NAME = "sdk-android"
 
 /** The library's own semver, set by the release. The first published version is 1.0.0. */
-internal const val SDK_VERSION = "1.0.0"
+internal const val SDK_VERSION = "1.1.0"
+
+/**
+ * The `sdk` a batch names: this SDK's own, or a wrapper's built over it.
+ *
+ * A wrapper is an SDK for another runtime that calls this one underneath — the
+ * Solar2D plugin, `sdk-solar2d`. Its events name the wrapper, because that is
+ * what a developer installed and what a breakdown by SDK should count; the
+ * server reads the platform of a wrapper's batch from its `device`, which this
+ * SDK still fills. Set only through `ai.togohq.wrapper.TogoWrapper`, never by an app.
+ */
+internal data class SdkIdentity(val name: String, val version: String) {
+  companion object {
+    /** This SDK, as it names itself. */
+    val NATIVE: SdkIdentity = SdkIdentity(SDK_NAME, SDK_VERSION)
+
+    /**
+     * A wrapper's name and version, or null when they would not be read as one —
+     * then the batch keeps naming this SDK. The name is one the server reads a
+     * wrapper's platform for (`Wire.wrapperSdkNames`): any other would land as
+     * `unknown` and lose its device. The version is non-empty, holds no
+     * whitespace, and is at most `Wire.maxSdkVersionLength` UTF-16 code units
+     * (`length`), as the edge counts.
+     */
+    fun wrapper(name: String, version: String): SdkIdentity? =
+      if (name in Wire.wrapperSdkNames && version.isNotEmpty() &&
+        version.length <= Wire.maxSdkVersionLength && version.none { it.isWhitespace() }
+      ) SdkIdentity(name, version) else null
+  }
+}
 
 internal object Wire {
   const val envelopeVersion = 2
+  /** The edge's bound on `sdk.version`, in UTF-16 code units. */
+  const val maxSdkVersionLength = 32
+  /**
+   * The wrapper SDKs the server reads a platform for from the batch's
+   * `device.os`; a wrapper not listed here names this SDK instead.
+   */
+  val wrapperSdkNames: List<String> = listOf("sdk-solar2d")
   const val maxBatchSize = 500
   /**
    * How old an event may be when it is UPLOADED. The edge rejects anything

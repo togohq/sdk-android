@@ -9,9 +9,12 @@ import ai.togohq.core.HttpTransport
 import ai.togohq.core.IdentityStore
 import ai.togohq.core.Logger
 import ai.togohq.core.QueueStore
+import ai.togohq.core.SDK_NAME
+import ai.togohq.core.SdkIdentity
 import ai.togohq.core.SerialExecutor
 import ai.togohq.core.TogoExecutor
 import ai.togohq.core.Transport
+import ai.togohq.core.Wire
 import ai.togohq.core.WriteKeys
 import ai.togohq.core.toProps
 import android.app.Application
@@ -269,6 +272,7 @@ public object Togo {
       device = Platform.device(app),
       timezone = Platform.timezone(),
       onError = onError?.let { listener -> { error: TogoError -> listener.onError(error) } },
+      sdk = sdkIdentity(config),
       firstInstallMs = environment.firstInstallMs,
     )
     val problem = WriteKeys.problem(config.writeKey)
@@ -296,6 +300,22 @@ public object Togo {
       unlocked = { executor.execute { created.identityBecameAvailable() } },
     )
     return { observe(signals) }
+  }
+
+  /**
+   * The `sdk` events name: a wrapper's own when `TogoWrapper.set()` gave one the
+   * server reads, else this SDK's. A refused one is said once and costs nothing.
+   */
+  private fun sdkIdentity(config: TogoConfig): SdkIdentity {
+    val name = config.wrapperName ?: return SdkIdentity.NATIVE
+    return SdkIdentity.wrapper(name, config.wrapperVersion ?: "") ?: run {
+      log.log(
+        "Togo.setup() was given a wrapper name or version the server would not read (a name is " +
+          "one of ${Wire.wrapperSdkNames.joinToString(", ")}; a version is 1 to " +
+          "${Wire.maxSdkVersionLength} characters with no spaces), so events name $SDK_NAME instead.",
+      )
+      SdkIdentity.NATIVE
+    }
   }
 
   /** Run `work` on the SDK's thread, in call order. Before `setup()` the call is dropped with one log line. */

@@ -90,6 +90,62 @@ class TogoTest {
     assertEquals("user_1", network.events[2].string("userId"))
   }
 
+  /** A wrapper (the Solar2D plugin) names itself on every event, `$` events included. */
+  @Test fun aWrapperNamesItselfOnEveryEvent() {
+    val builder = liveKey()
+    ai.togohq.wrapper.TogoWrapper.set(builder, "sdk-solar2d", "1.2.0")
+    setup(builder.build())
+    Togo.track("level_complete")
+    flushAndWait()
+    val sdks = network.events.map { (it["sdk"] as JsonValue.Obj).let { s -> "${s.string("name")}@${s.string("version")}" } }
+    assertTrue(sdks.isNotEmpty())
+    assertEquals(setOf("sdk-solar2d@1.2.0"), sdks.toSet())
+  }
+
+  /** A name the server would not read, or a version the edge would refuse, never costs the batch: one line, and events name this SDK. */
+  @Test fun aWrapperTheEdgeWouldRefuseIsIgnoredAndSaidOnce() {
+    for ((name, version) in listOf<Pair<String?, String?>>(
+      "Solar2D" to "1.0.0",
+      "sdk-" to "1.0.0",
+      "sdk-solar2d" to "",
+      "sdk-solar2d" to "1".repeat(33),
+      "sdk-" + "a".repeat(61) to "1.0.0",
+      "sdk-solar2d" to "1.0 beta",
+      // A wrapper the server does not read a platform for would land as unknown.
+      "sdk-flutter" to "1.0.0",
+      // 17 emoji are 34 UTF-16 units, past the edge's 32.
+      "sdk-solar2d" to "\uD83D\uDE42".repeat(17),
+      // A build field never filled.
+      "sdk-solar2d" to null,
+      null to "1.0.0",
+    )) {
+      Togo.resetForTest()
+      Togo.log = Logger { logs.add(it) }
+      logs.clear()
+      network = RecordingTransport()
+      val builder = liveKey()
+      ai.togohq.wrapper.TogoWrapper.set(builder, name, version)
+      setup(builder.build())
+      Togo.track("a")
+      flushAndWait()
+      val names = network.events.map { (it["sdk"] as JsonValue.Obj).string("name") }.toSet()
+      assertEquals("$name@$version", setOf("sdk-android"), names)
+      assertEquals("$name@$version", 1, logs.count { it.contains("wrapper name or version") })
+    }
+  }
+
+  /** A null builder, or nothing to set, changes nothing and says nothing. */
+  @Test fun aNullWrapperArgumentLeavesThisSdksName() {
+    val builder = liveKey()
+    ai.togohq.wrapper.TogoWrapper.set(builder, null, null)
+    ai.togohq.wrapper.TogoWrapper.set(null, "sdk-solar2d", "1.0.0")
+    setup(builder.build())
+    Togo.track("a")
+    flushAndWait()
+    assertEquals(setOf("sdk-android"), network.events.map { (it["sdk"] as JsonValue.Obj).string("name") }.toSet())
+    assertEquals(0, logs.count { it.contains("wrapper name or version") })
+  }
+
   /** Without the options, the app's version and build come from its package. */
   @Test fun theAppVersionAndBuildAreReadFromThePackage() {
     val info = shadowOf(context.packageManager).getInternalMutablePackageInfo(context.packageName)

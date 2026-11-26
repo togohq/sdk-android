@@ -5,6 +5,26 @@ Every notable change to the Togo AI Android SDK, `ai.togohq:sdk-android`. The fo
 [Semantic Versioning](https://semver.org/): each version is published to
 `https://maven.togohq.ai` and tagged in this repository.
 
+## [1.1.0] - 2026-11-26
+
+Version 1.1.0 introduces TogoWrapper for SDK customization and improves error handling for wrapper
+SDKs.
+
+### Added
+
+- **`TogoWrapper.set()`** allows a wrapper SDK to set its name and version for every event,
+  enhancing SDK customization.
+
+### Changed
+
+- The documentation now includes **`TogoWrapper`** as part of the SDK's public surface, detailing
+  its usage and limitations.
+
+### Fixed
+
+- Improved error handling in **`SdkIdentity.wrapper`** to refuse unknown wrapper names and null
+  values with a log line.
+
 ## [1.0.0] - 2026-11-24
 
 The first release of the Android SDK introduces core features for app lifecycle management and event

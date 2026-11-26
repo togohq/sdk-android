@@ -30,6 +30,8 @@ internal data class EngineOptions(
    */
   val firstInstallMs: Long? = null,
   val onError: ((TogoError) -> Unit)? = null,
+  /** The `sdk` every event names: this SDK's own unless a wrapper set its own. */
+  val sdk: SdkIdentity = SdkIdentity.NATIVE,
   /**
    * Fixed on a device, not options, because batching is the SDK's to set: 50
    * events or 5 seconds. Only the scenario runner changes them.
@@ -650,6 +652,7 @@ internal class Engine(
       eventName = event.eventName, clientEventMs = event.clientEventMs, eventId = event.eventId,
       anonymousId = ids.anonymousId, deviceId = ids.deviceId, userId = eventUserId, sessionId = sessionId,
       properties = event.properties, personProperties = event.personProperties, timezone = event.timezone,
+      sdkName = options.sdk.name, sdkVersion = options.sdk.version,
     )
   }
 
@@ -659,6 +662,7 @@ internal class Engine(
       eventName = Wire.sessionStartedEvent, clientEventMs = occurredMs, eventId = randomId(),
       anonymousId = ids.anonymousId, deviceId = ids.deviceId, userId = userId, sessionId = sessionId,
       properties = emptyMap(), personProperties = null, timezone = options.timezone,
+      sdkName = options.sdk.name, sdkVersion = options.sdk.version,
     )
     enqueue(started, app, device)
   }
