@@ -19,7 +19,7 @@ package ai.togohq.core
 internal const val SDK_NAME = "sdk-android"
 
 /** The library's own semver, set by the release. The first published version is 1.0.0. */
-internal const val SDK_VERSION = "1.1.0"
+internal const val SDK_VERSION = "1.2.0"
 
 /**
  * The `sdk` a batch names: this SDK's own, or a wrapper's built over it.
@@ -239,6 +239,12 @@ internal data class RawEvent(
   val timezone: String?,
   val sdkName: String = SDK_NAME,
   val sdkVersion: String = SDK_VERSION,
+  /**
+   * Experiment name → variant: the still-active experiments this device
+   * entered, stamped at `track()` so a queued event keeps the stamp it was
+   * tracked with. `null` when there are none.
+   */
+  val experiments: Map<String, String>? = null,
 ) {
   fun json(): JsonValue {
     val o = LinkedHashMap<String, JsonValue>()
@@ -253,6 +259,7 @@ internal data class RawEvent(
     sessionId?.let { o["sessionId"] = JsonValue.Str(it) }
     personProperties?.let { o["personProperties"] = it.json() }
     timezone?.let { o["timezone"] = JsonValue.Str(it) }
+    experiments?.let { o["experiments"] = JsonValue.Obj(it.mapValues { (_, v) -> JsonValue.Str(v) }) }
     return JsonValue.Obj(o)
   }
 
@@ -277,6 +284,8 @@ internal data class RawEvent(
         timezone = json.string("timezone"),
         sdkName = sdk?.string("name") ?: SDK_NAME,
         sdkVersion = sdk?.string("version") ?: SDK_VERSION,
+        experiments = (json["experiments"] as? JsonValue.Obj)?.values
+          ?.mapNotNull { (k, v) -> (v as? JsonValue.Str)?.let { k to it.value } }?.toMap(),
       )
     }
   }

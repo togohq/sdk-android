@@ -3,11 +3,14 @@ package ai.togohq
 import ai.togohq.core.AppLifecycle
 import ai.togohq.core.Engine
 import ai.togohq.core.EngineOptions
+import ai.togohq.core.ExperimentStore
+import ai.togohq.core.FileExperimentStore
 import ai.togohq.core.FileIdentityStore
 import ai.togohq.core.FileQueueStore
 import ai.togohq.core.HttpTransport
 import ai.togohq.core.IdentityStore
 import ai.togohq.core.Logger
+import ai.togohq.core.MemoryExperimentStore
 import ai.togohq.core.QueueStore
 import ai.togohq.core.SDK_NAME
 import ai.togohq.core.SdkIdentity
@@ -111,6 +114,47 @@ public object Togo {
     }
   }
 
+  /**
+   * Which variant of an experiment this device gets:
+   *
+   * ```kotlin
+   * Togo.getExperiment("checkout_redesign") { result ->
+   *   if (result.variant == "new") showNewCheckout() else showCheckout()
+   * }
+   * ```
+   *
+   * A participant's first answer records `$experiment_entered` — once per
+   * person per experiment, across launches — and later events carry the
+   * variant; there is no separate logging call. **A stored answer comes back
+   * at once, offline included**, and is refreshed in the background when old;
+   * with none stored it asks the network, for at most 800 ms. A `null` variant
+   * means run your default path: before the first answer with no network, with
+   * consent pending or denied, or with the app in the background. `callback`
+   * runs on the main thread.
+   */
+  @JvmStatic
+  public fun getExperiment(name: String?, callback: ExperimentCallback?) {
+    if (callback == null) {
+      log.log("Togo.getExperiment() was given no callback and did nothing.")
+      return
+    }
+    val main = Handler(Looper.getMainLooper())
+    val deliver = { result: TogoExperiment -> main.post { callback.onResult(result) }; Unit }
+    val (engine, executor) = synchronized(lock) { engine to executor }
+    // A null name is a name the server cannot hold: not_found, as an empty one.
+    if (engine == null || executor == null) return deliver(TogoExperiment.unavailable(name ?: ""))
+    executor.execute { engine.getExperiment(name ?: "", deliver) }
+  }
+
+  /**
+   * The answer this device has stored for `name`, now, with no network: for
+   * choosing the first screen before anything could arrive. `null` when there
+   * is none — run your default path. Records the exposure as [getExperiment]
+   * does, so the answer you branch on is the one counted.
+   */
+  @JvmStatic
+  public fun cachedExperiment(name: String?): TogoExperiment? = read(null) { it.cachedExperiment(name ?: "") }
+
   /** Call at logout. A new anonymous visitor and a new session on this device; the device id stays. */
   @JvmStatic
   public fun reset() {
@@ -169,6 +213,8 @@ public object Togo {
     val identity: IdentityStore,
     val queue: QueueStore,
     val transport: Transport,
+    /** The stored experiment answers, `experiments.json` beside the identity file. */
+    val experiments: ExperimentStore = MemoryExperimentStore(),
     /** When the package was installed: the input of the install rule. */
     val firstInstallMs: Long? = null,
     /**
@@ -194,6 +240,7 @@ public object Togo {
           FileIdentityStore(File(directory, "identity.json"), executor, { UnlockWatcher.userUnlocked(app) }, log),
           FileQueueStore(File(directory, "queue.jsonl")),
           transport,
+          FileExperimentStore(File(directory, "experiments.json")),
           Platform.firstInstallMs(app),
           observe = { signals ->
             val application = app as? Application
@@ -274,12 +321,15 @@ public object Togo {
       onError = onError?.let { listener -> { error: TogoError -> listener.onError(error) } },
       sdk = sdkIdentity(config),
       firstInstallMs = environment.firstInstallMs,
+      assignEndpoint = config.assignEndpoint,
+      experiments = config.experiments,
     )
     val problem = WriteKeys.problem(config.writeKey)
     val lifecycle = environment.observe?.let { AppLifecycle() }
     val created = executor.await {
       Engine(
-        options, environment.identity, queueStore = environment.queue, transport = environment.transport,
+        options, environment.identity, queueStore = environment.queue, experimentStore = environment.experiments,
+        transport = environment.transport,
         executor = executor, callbacks = callbacks, clock = AndroidClock, log = log,
         humanPresent = if (lifecycle == null) ({ true }) else ({ lifecycle.isForeground }),
       ).also { engine ->
@@ -288,6 +338,8 @@ public object Togo {
         if (problem != null) engine.disable(problem, TogoErrorCode.WRITE_KEY_INVALID)
         // The launch: its install or update decision, and no session.
         lifecycle?.launched(engine)
+        // With no lifecycle there is no `$app_opened` to fetch at: fetch now.
+        if (lifecycle == null) engine.preloadExperiments(config.experiments)
       }
     }
     engine = created

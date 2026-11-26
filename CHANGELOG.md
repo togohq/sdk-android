@@ -5,6 +5,27 @@ Every notable change to the Togo AI Android SDK, `ai.togohq:sdk-android`. The fo
 [Semantic Versioning](https://semver.org/): each version is published to
 `https://maven.togohq.ai` and tagged in this repository.
 
+## [1.2.0] - 2026-11-26
+
+Version 1.2.0 introduces experiment management with offline support and improves error handling.
+
+### Added
+
+- **`getExperiment()`** and **`cachedExperiment()`** provide experiment answers with offline
+  support, storing responses in `experiments.json`.
+
+### Changed
+
+- The reference documentation now includes **`getExperiment`**, **`cachedExperiment`**, and related
+  options.
+
+### Fixed
+
+- **`assignEndpoint`** now logs an error when a non-URL is provided, instead of failing silently.
+- A finished experiment's stamp remains ended for the session, preventing incorrect reactivation.
+- **`reset()`** now retains experiment entry records on locked devices, preventing duplicate
+  entries.
+
 ## [1.1.0] - 2026-11-26
 
 Version 1.1.0 introduces TogoWrapper for SDK customization and improves error handling for wrapper

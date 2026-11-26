@@ -3,6 +3,7 @@ package ai.togohq.core
 import ai.togohq.TogoConsent
 import ai.togohq.TogoError
 import ai.togohq.TogoErrorCode
+import ai.togohq.TogoExperiment
 import java.net.URL
 import kotlin.math.min
 import kotlin.math.pow
@@ -32,6 +33,13 @@ internal data class EngineOptions(
   val onError: ((TogoError) -> Unit)? = null,
   /** The `sdk` every event names: this SDK's own unless a wrapper set its own. */
   val sdk: SdkIdentity = SdkIdentity.NATIVE,
+  /** Where `getExperiment()` asks: the assignment service. */
+  val assignEndpoint: String = Experiments.DEFAULT_ENDPOINT,
+  /**
+   * Experiment names fetched at each `$app_opened` without an exposure, so the
+   * first `getExperiment()` of a launch does not wait.
+   */
+  val experiments: List<String> = emptyList(),
   /**
    * Fixed on a device, not options, because batching is the SDK's to set: 50
    * events or 5 seconds. Only the scenario runner changes them.
@@ -65,6 +73,7 @@ internal class Engine(
   private val clock: Clock = SystemClock,
   private val log: Logger = standardErrorLogger,
   private val humanPresent: () -> Boolean = { true },
+  private val experimentStore: ExperimentStore = MemoryExperimentStore(),
 ) {
   private val sessions = Sessions(options.sessionTimeoutSeconds, log)
   private val defaults = DefaultProperties(options.defaultProperties, log)
@@ -79,6 +88,23 @@ internal class Engine(
 
   var consent: TogoConsent = options.consent
     private set
+
+  private val assignments = Experiments(
+    options.writeKey, options.assignEndpoint, experimentStore, transport, executor, clock,
+    ids = {
+      if (disabled) null else identity()?.let { Experiments.Ids(it.anonymousId, it.deviceId, userId) }
+    },
+    sessionId = { sessionId },
+    humanPresent = humanPresent,
+    enter = { name, variant ->
+      submit(
+        Wire.experimentEnteredEvent,
+        mapOf("experiment" to JsonValue.Str(name), "variant" to JsonValue.Str(variant)),
+        null, options.timezone,
+      )
+    },
+    log = log,
+  )
 
   /**
    * The signed-in user. Remembered in the identity record when consent permits
@@ -135,6 +161,7 @@ internal class Engine(
     if (consent == TogoConsent.DENIED) {
       queue.clear()
       identityStore.erase()
+      experimentStore.remove()
     }
   }
 
@@ -244,6 +271,27 @@ internal class Engine(
     return submit(label, emptyMap(), ops, null, drops)
   }
 
+  /**
+   * Which variant of an experiment this device gets. The stored answer when
+   * there is one — at any age, offline included, refreshed in the background
+   * when old — or the network's, within 800 ms; `unavailable` otherwise. A
+   * participant's first answer records `$experiment_entered`, once per unit per
+   * experiment, and later events carry the variant. `completion` runs on the
+   * engine's executor.
+   */
+  fun getExperiment(name: String, completion: (TogoExperiment) -> Unit) {
+    if (disabled) return completion(TogoExperiment.unavailable(name))
+    assignments.get(name, completion)
+  }
+
+  /** The stored answer, now, with no network: `null` when this device has none. Records the exposure. */
+  fun cachedExperiment(name: String): TogoExperiment? = if (disabled) null else assignments.cached(name)
+
+  /** Fetch these names without recording an exposure. */
+  fun preloadExperiments(names: List<String>) {
+    if (!disabled) assignments.preload(names)
+  }
+
   /** Logout: a new anonymous visitor and a new session; the device id stays. */
   fun reset() {
     loadIfPermitted()
@@ -263,6 +311,7 @@ internal class Engine(
       // pass through `pending`, and deleting is not writing, so it needs no
       // permission of its own.
       identityStore.erase()
+      assignments.clear()
       record = IdentityRecord()
       loaded = true
       sessions.forget()
@@ -413,6 +462,9 @@ internal class Engine(
    */
   fun appOpened(fromBackground: Boolean) {
     submit(Wire.appOpenedEvent, mapOf("from_background" to JsonValue.Bool(fromBackground)), null, options.timezone)
+    // Every foreground refreshes the stored answers: a finished experiment ends
+    // its stamp here, and the next session gets a changed answer.
+    if (!disabled) assignments.appOpened(options.experiments)
   }
 
   /**
@@ -653,6 +705,9 @@ internal class Engine(
       anonymousId = ids.anonymousId, deviceId = ids.deviceId, userId = eventUserId, sessionId = sessionId,
       properties = event.properties, personProperties = event.personProperties, timezone = event.timezone,
       sdkName = options.sdk.name, sdkVersion = options.sdk.version,
+      // Stamped now, so a queued event keeps it. A released event has none: it
+      // was held because nothing could be read or stored yet.
+      experiments = if (released == null) assignments.stampFor(event.eventName) else null,
     )
   }
 
@@ -791,6 +846,7 @@ internal class Engine(
       identifiedBeforeLoad = false
     }
     sessions.forget()
+    assignments.forgetIdentity()
     // In memory first, whatever consent says: a grant after this must mint a
     // new anonymous id and open a new session, never reuse the last user's.
     record = record.copy(userId = null, session = null)

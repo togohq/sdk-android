@@ -71,7 +71,7 @@ internal object ScenarioFormat {
    * app has. One device, no `server` actor and no includes, so the steps are
    * one app's life and nothing else.
    */
-  private val nativeVerbs = verbs + listOf("launch", "foreground", "background")
+  private val nativeVerbs = verbs + listOf("launch", "foreground", "background", "getExperiment", "cachedExperiment")
   private val nativeStepKeys = (nativeVerbs + listOf("properties", "at")).toSet()
 
   fun nativeScenarioNames(root: File = defaultRoot): List<String> =
@@ -102,9 +102,15 @@ internal object ScenarioFormat {
       for (verb in listOf("foreground", "background")) {
         if (o.containsKey(verb) && (o[verb] as? JsonValue.Str)?.value.isNullOrEmpty()) problems += "${step.origin}: $verb names a scene"
       }
+      for (verb in listOf("getExperiment", "cachedExperiment")) {
+        if (o.containsKey(verb) && (o[verb] as? JsonValue.Str)?.value.isNullOrEmpty()) problems += "${step.origin}: $verb names an experiment"
+      }
     }
     if (problems.isNotEmpty()) throw ScenarioError("native scenario $name: ${problems.joinToString("; ")}")
-    return Scenario(name, init, (raw["deviceClockOffsetMs"] as? JsonValue.Int)?.value ?: 0, steps)
+    return Scenario(
+      name, init, (raw["deviceClockOffsetMs"] as? JsonValue.Int)?.value ?: 0, steps,
+      (raw["assignments"] as? JsonValue.Obj)?.values ?: emptyMap(),
+    )
   }
 
   private fun expand(steps: List<JsonValue>, root: File, chain: List<String>, problems: MutableList<String>): List<Step> {
@@ -231,7 +237,7 @@ internal object ScenarioFormat {
     }
     return Plan(
       scenario.name, n, userId, (fill(JsonValue.Obj(scenario.initOptions), userId, n) as JsonValue.Obj).values,
-      scenario.deviceClockOffsetMs, items,
+      scenario.deviceClockOffsetMs, items, scenario.assignments,
     )
   }
 
@@ -277,6 +283,8 @@ internal data class Scenario(
   val initOptions: Map<String, JsonValue>,
   val deviceClockOffsetMs: Long,
   val steps: List<Step>,
+  /** What the assignment service answers this device, per experiment name (native scenarios only). */
+  val assignments: Map<String, JsonValue> = emptyMap(),
 )
 
 /** One planned call. `order` is the step's position, so equal times keep the scenario's order. */
@@ -289,6 +297,7 @@ internal data class Plan(
   val initOptions: Map<String, JsonValue>,
   val deviceClockOffsetMs: Long,
   val items: List<PlanItem>,
+  val assignments: Map<String, JsonValue> = emptyMap(),
 ) {
   /** In time order, stably. */
   val ordered: List<PlanItem> get() = items.sortedWith(compareBy<PlanItem> { it.timeMs }.thenBy { it.order })

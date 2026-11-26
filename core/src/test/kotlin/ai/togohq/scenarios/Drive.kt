@@ -5,6 +5,7 @@ import ai.togohq.core.ActivityCounter
 import ai.togohq.core.AppInfo
 import ai.togohq.core.AppLifecycle
 import ai.togohq.core.MemoryIdentityStore
+import ai.togohq.core.MemoryExperimentStore
 import ai.togohq.core.MemoryQueueStore
 import ai.togohq.core.Clock
 import ai.togohq.core.DeviceInfo
@@ -158,10 +159,13 @@ internal object ScenarioDriver {
     val clock = VirtualClock(nowMs)
     clock.skew = plan.deviceClockOffsetMs
     network.label = "${plan.scenario}#${plan.n}:app"
+    network.assignments = plan.assignments
     val executor = InlineExecutor()
     val mainThread = VirtualScheduler(clock)
     val identity = MemoryIdentityStore()
     val queue = MemoryQueueStore()
+    // Like the identity and the queue, the stored answers outlive a launch.
+    val experiments = MemoryExperimentStore()
     var engine: Engine? = null
     var counter: ActivityCounter? = null
     var installedAtMs: Long? = null
@@ -192,7 +196,7 @@ internal object ScenarioDriver {
         val lifecycle = AppLifecycle()
         val started = Engine(
           options, identity, queueStore = queue, transport = network, executor = executor, callbacks = executor,
-          clock = clock, log = Logger { }, humanPresent = { lifecycle.isForeground },
+          clock = clock, log = Logger { }, humanPresent = { lifecycle.isForeground }, experimentStore = experiments,
         )
         counter = ActivityCounter(mainThread, { lifecycle.foregrounded() }, { lifecycle.backgrounded() })
         lifecycle.launched(started)
@@ -202,9 +206,13 @@ internal object ScenarioDriver {
       val current = engine ?: continue // The loader requires a launch first.
       val foreground = call.string("foreground")
       val background = call.string("background")
+      val experiment = call.string("getExperiment")
+      val cached = call.string("cachedExperiment")
       when {
         foreground != null -> counter!!.activityStarted(foreground)
         background != null -> counter!!.activityStopped(background)
+        experiment != null -> current.getExperiment(experiment) { }
+        cached != null -> current.cachedExperiment(cached)
         else -> perform(current, call) { release(current, network, clock, nowMs) }
       }
     }
@@ -319,8 +327,25 @@ internal class HeldNetwork : Transport {
   var label = ""
   var forward: Transport? = null
   val sent = ArrayList<Upload>()
+  /** The scenario's stand-in for the assignment service: answers at once, never recorded. */
+  var assignments: Map<String, JsonValue> = emptyMap()
 
   override fun post(url: URL, writeKey: String, body: ByteArray, completion: (TransportResponse) -> Unit) {
+    if (url.path.endsWith("v1/assignments")) {
+      val names = ((JsonValue.parse(body) as? JsonValue.Obj)?.get("experiments") as? JsonValue.Arr)?.values
+        ?.mapNotNull { (it as? JsonValue.Str)?.value }.orEmpty()
+      val notFound = JsonValue.Obj(
+        mapOf("status" to JsonValue.Str("not_found"), "variant" to JsonValue.Null, "participating" to JsonValue.Bool(false)),
+      )
+      val answer = JsonValue.Obj(
+        mapOf(
+          "maxAgeSeconds" to JsonValue.Int(3600),
+          "assignments" to JsonValue.Obj(names.associateWith { assignments[it] ?: notFound }),
+        ),
+      )
+      completion(TransportResponse(200, body = answer.serialized().toByteArray()))
+      return
+    }
     val json = JsonValue.parse(body) as? JsonValue.Obj
     if (!released || json == null) {
       completion(TransportResponse(null))

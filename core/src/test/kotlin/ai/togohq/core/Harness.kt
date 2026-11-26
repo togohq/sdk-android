@@ -32,7 +32,25 @@ internal class FakeNetwork : Transport {
     held.removeAt(0)(response)
   }
 
+  /** The assignment service: what each `/v1/assignments` request asked for, and its answer — offline by default. */
+  val assignRequests = ArrayList<JsonValue.Obj>()
+  var assign: (JsonValue.Obj) -> TransportResponse = { TransportResponse(null) }
+  /** Assignment requests go out and wait for [answerAssign]. */
+  var holdsAssign = false
+  private val heldAssign = ArrayList<Pair<JsonValue.Obj, (TransportResponse) -> Unit>>()
+
+  fun answerAssign() {
+    val (body, completion) = heldAssign.removeAt(0)
+    completion(assign(body))
+  }
+
   override fun post(url: URL, writeKey: String, body: ByteArray, completion: (TransportResponse) -> Unit) {
+    if (url.path.endsWith("v1/assignments")) {
+      val json = JsonValue.parse(body) as JsonValue.Obj
+      assignRequests.add(json)
+      if (holdsAssign) heldAssign.add(json to completion) else completion(assign(json))
+      return
+    }
     sent.add(JsonValue.parse(body) as JsonValue.Obj)
     urls.add(url)
     keys.add(writeKey)
@@ -48,16 +66,47 @@ internal class FakeNetwork : Transport {
 
   companion object {
     val accepted = TransportResponse(202, body = "{}".toByteArray())
+
+    /** The assignment service's answer, in its wire format. */
+    fun assignments(
+      answers: Map<String, Triple<String, String?, Boolean>>,
+      unit: String = "anonymous_id",
+      maxAgeSeconds: Long = 3600,
+    ): TransportResponse {
+      val body = obj(
+        "maxAgeSeconds" to JsonValue.Int(maxAgeSeconds),
+        "assignments" to JsonValue.Obj(
+          answers.mapValues { (_, a) ->
+            obj(
+              "status" to str(a.first),
+              "variant" to (a.second?.let(::str) ?: JsonValue.Null),
+              "participating" to JsonValue.Bool(a.third),
+              "unit" to str(unit),
+            )
+          },
+        ),
+      )
+      return TransportResponse(200, body = body.serialized().toByteArray())
+    }
   }
 }
 
-/** Work run inline; timers recorded rather than fired. */
+/** Work run inline; timers recorded rather than fired, unless a test fires them. */
 internal class InlineExecutor : TogoExecutor {
   val timers = ArrayList<Double>()
+  private val scheduled = ArrayList<Pair<Double, () -> Unit>>()
   override fun execute(work: () -> Unit) = work()
   override fun after(seconds: Double, work: () -> Unit): () -> Unit {
     timers.add(seconds)
+    scheduled.add(seconds to work)
     return {}
+  }
+
+  /** Run the timers set for [seconds], as if that much time had passed. */
+  fun fire(seconds: Double) {
+    val due = scheduled.filter { it.first == seconds }
+    scheduled.removeAll(due)
+    due.forEach { it.second() }
   }
 }
 
@@ -71,6 +120,7 @@ internal class Harness(
   device: DeviceInfo? = DeviceInfo("Android", "14", "Pixel 8", "mobile", "Google"),
   val identity: MemoryIdentityStore = MemoryIdentityStore(),
   val queueStore: MemoryQueueStore = MemoryQueueStore(),
+  val experimentStore: MemoryExperimentStore = MemoryExperimentStore(),
   val deviceIds: DeviceIdProvider = generatedDeviceIds,
   consentBufferMaxEvents: Int = 100,
   firstInstallMs: Long? = null,
@@ -106,13 +156,14 @@ internal class Harness(
     if (!lifecycle) {
       engine = Engine(
         options, identity, deviceIds, queueStore, network, executor, executor, clock, Logger { logs.add(it) },
+        experimentStore = experimentStore,
       )
       return engine
     }
     val next = AppLifecycle()
     engine = Engine(
       options, identity, deviceIds, queueStore, network, executor, executor, clock, Logger { logs.add(it) },
-      humanPresent = { next.isForeground },
+      humanPresent = { next.isForeground }, experimentStore = experimentStore,
     )
     appLifecycle = next
     counter = ActivityCounter(mainThread, { next.foregrounded() }, { next.backgrounded() }) { unknownStops++ }

@@ -13,9 +13,12 @@
 # download size depends on the store's compression and splitting. The SDK has
 # no resources, so the dex files are all it adds.
 #
-# THE CEILING: 95 KB. It started at 200 KB, an estimate; the first real
+# THE CEILING: 110 KB. It started at 200 KB, an estimate; the first real
 # measurement, on 2026-11-23 with AGP 9.5.1 and Kotlin 2.4.21, was 77,608 bytes
-# (75 KB), and the gate is set about 25% above it. The number includes the parts
+# (75 KB), and the gate was set about 25% above it, at 95 KB. getExperiment() —
+# a stored answer, the assignment request, the exposure and the stamp — took
+# the SDK from 85,492 bytes (83 KB) to 98,700 (96 KB) on 2026-11-26, and the
+# gate went to 110 KB, about 10% above that. The number includes the parts
 # of the Kotlin standard library the SDK uses and this tiny app does not, which
 # a real app mostly already ships. Raise it deliberately, in the same commit as
 # the reason — never quietly. One dependency would trip it on its own.
@@ -32,7 +35,7 @@
 # `./gradlew check` builds both APKs and runs it (the `sizeCheck` task).
 set -eu
 
-CEILING_BYTES=$((95 * 1024))
+CEILING_BYTES=$((110 * 1024))
 
 fail() {
   echo "check-size: $1" >&2

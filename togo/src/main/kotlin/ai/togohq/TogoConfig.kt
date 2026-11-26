@@ -48,6 +48,14 @@ public class TogoConfig private constructor(builder: Builder) {
    * thread, after the call that caused it returns.
    */
   public val onError: TogoErrorListener? = builder.onError
+  /**
+   * The experiments this app branches on, fetched whenever the app comes to
+   * the foreground, so the first `getExperiment()` — or a `cachedExperiment()`
+   * later, offline — has an answer. Fetching records no exposure.
+   */
+  public val experiments: List<String> = builder.experiments
+  /** Where experiment assignments come from. Defaults to the production service. */
+  public val assignEndpoint: String = builder.assignEndpoint
   /** A wrapper SDK's own name and version, set by `TogoWrapper.set()` alone. */
   internal val wrapperName: String? = builder.wrapperName
   internal val wrapperVersion: String? = builder.wrapperVersion
@@ -67,6 +75,8 @@ public class TogoConfig private constructor(builder: Builder) {
     internal var appVersion: String? = null
     internal var appBuild: String? = null
     internal var onError: TogoErrorListener? = null
+    internal var experiments: List<String> = emptyList()
+    internal var assignEndpoint: String = DEFAULT_ASSIGN_ENDPOINT
     internal var wrapperName: String? = null
     internal var wrapperVersion: String? = null
 
@@ -79,11 +89,14 @@ public class TogoConfig private constructor(builder: Builder) {
     public fun appVersion(version: String?): Builder = apply { appVersion = version }
     public fun appBuild(build: String?): Builder = apply { appBuild = build }
     public fun onError(listener: TogoErrorListener?): Builder = apply { onError = listener }
+    public fun experiments(names: List<String?>?): Builder = apply { experiments = names?.filterNotNull() ?: emptyList() }
+    public fun assignEndpoint(endpoint: String?): Builder = apply { if (endpoint != null) assignEndpoint = endpoint }
     public fun build(): TogoConfig = TogoConfig(this)
   }
 
   public companion object {
     public const val DEFAULT_ENDPOINT: String = "https://in.togohq.ai"
+    public const val DEFAULT_ASSIGN_ENDPOINT: String = "https://assign.togohq.ai"
   }
 }
 
